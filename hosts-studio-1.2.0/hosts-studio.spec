@@ -1,4 +1,4 @@
-Name:           hosts-studio
+Name:           hosts-studio-1.2
 Version:        1.2.0
 Release:        1%{?dist}
 Summary:        A safe GUI application for editing /etc/hosts file
@@ -57,18 +57,18 @@ cat > %{buildroot}%{_bindir}/%{name} << 'EOF'
 
 # Check if running as root
 if [ "$EUID" -eq 0 ]; then
-    exec python3 "$(dirname "$0")/../share/hosts-studio/hosts_studio.py" "$@"
+    exec python3 /usr/share/hosts-studio-1.2/hosts_studio.py "$@"
 else
     # Use pkexec for privilege escalation
     if command -v pkexec >/dev/null 2>&1; then
-        exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" python3 "$(dirname "$0")/../share/hosts-studio/hosts_studio.py" "$@"
+        exec pkexec env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" python3 /usr/share/hosts-studio-1.2/hosts_studio.py "$@"
     elif command -v gksudo >/dev/null 2>&1; then
-        exec gksudo -- python3 "$(dirname "$0")/../share/hosts-studio/hosts_studio.py" "$@"
+        exec gksudo -- python3 /usr/share/hosts-studio-1.2/hosts_studio.py "$@"
     elif command -v kdesudo >/dev/null 2>&1; then
-        exec kdesudo -- python3 "$(dirname "$0")/../share/hosts-studio/hosts_studio.py" "$@"
+        exec kdesudo -- python3 /usr/share/hosts-studio-1.2/hosts_studio.py "$@"
     else
         echo "This application requires root privileges to modify /etc/hosts."
-        echo "Please run with: sudo DISPLAY=\$DISPLAY python3 $(dirname "$0")/../share/hosts-studio/hosts_studio.py"
+        echo "Please run with: sudo DISPLAY=\$DISPLAY python3 /usr/share/hosts-studio-1.2/hosts_studio.py"
         exit 1
     fi
 fi
@@ -81,21 +81,21 @@ cat > %{buildroot}%{_datadir}/applications/%{name}.desktop << 'EOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Hosts Studio
-GenericName=Hosts Studio
-Comment=Edit /etc/hosts file safely with a graphical interface
-Exec=hosts-studio
-Icon=hosts-studio
+Name=Hosts Studio 1.2
+GenericName=Hosts Studio 1.2
+Comment=Edit /etc/hosts file safely with a graphical interface (v1.2)
+Exec=hosts-studio-1.2
+Icon=hosts-studio-1.2
 Terminal=false
 Categories=System;
 Keywords=hosts;network;dns;system;admin;
 StartupNotify=true
-StartupWMClass=hosts-studio
+StartupWMClass=hosts-studio-1.2
 EOF
 
 # Install icon
 if [ -f hosts-studio.png ]; then
-    install -m 644 hosts-studio.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/hosts-studio.png
+    install -m 644 hosts-studio.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/hosts-studio-1.2.png
 else
     # Create a simple SVG icon as fallback
     cat > %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/%{name}.svg << 'EOF'
