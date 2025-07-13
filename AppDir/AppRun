@@ -1,0 +1,32 @@
+#!/bin/sh
+# AppRun: Handle both mounted and extracted AppImage cases
+
+# Get the directory where this script is located
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# Check if we're running from a mounted AppImage (has APPIMAGE env var)
+if [ -n "$APPIMAGE" ]; then
+    # We're in a mounted AppImage, always extract and run
+    exec "$APPIMAGE" --appimage-extract-and-run "$@"
+fi
+
+# We're running from an extracted AppImage
+# Privilege escalation
+if [ -z "$HOSTS_STUDIO_PRIV_ESC" ]; then
+    export HOSTS_STUDIO_PRIV_ESC=1
+    if command -v pkexec >/dev/null 2>&1; then
+        exec pkexec env HOSTS_STUDIO_PRIV_ESC=1 DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" "$0" "$@"
+    elif command -v gksudo >/dev/null 2>&1; then
+        exec gksudo -- "$0" "$@"
+    elif command -v kdesudo >/dev/null 2>&1; then
+        exec kdesudo -- "$0" "$@"
+    else
+        echo "This application requires root privileges to modify /etc/hosts."
+        echo "Please run with: sudo DISPLAY=\$DISPLAY $0"
+        exit 1
+    fi
+fi
+
+# Use absolute path to the Python script and change to the correct directory
+cd "$HERE"
+exec python3 "${HERE}/usr/share/hosts-studio/hosts_studio.py" "$@"

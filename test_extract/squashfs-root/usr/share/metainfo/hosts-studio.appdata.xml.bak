@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>hosts-studio</id>
+  <name>Hosts Studio</name>
+  <summary>Edit /etc/hosts file safely with a graphical interface</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <description>
+    <p>Hosts Studio is a safe and convenient GUI application for editing the /etc/hosts file on Linux systems.</p>
+  </description>
+  <launchable type="desktop-id">hosts-studio.desktop</launchable>
+  <developer_name>Hosts Studio Team</developer_name>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2024-01-01">
+      <description><p>Initial release</p></description>
+    </release>
+  </releases>
+  <categories>
+    <category>System</category>
+    <category>Network</category>
+    <category>Settings</category>
+  </categories>
+</component>

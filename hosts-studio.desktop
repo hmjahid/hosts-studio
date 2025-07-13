@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Hosts Studio
+Comment=Edit /etc/hosts file safely with a graphical interface
+Exec=python3 usr/bin/hosts_studio.py
+Icon=hosts-studio
+Terminal=false
+Categories=System;
+Keywords=hosts;network;dns;system;admin;
+StartupNotify=true

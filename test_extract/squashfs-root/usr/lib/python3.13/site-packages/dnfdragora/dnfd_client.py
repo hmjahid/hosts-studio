@@ -1,0 +1,974 @@
+# coding: utf-8
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+# (C) 2013 - 2014 - Tim Lauridsen <timlau@fedoraproject.org>
+
+"""
+This is a Python 2.x & 3.x client API for the dnf-daemon Dbus Service
+
+This module gives a simple pythonic interface to doing  package action
+using the dnf-daemon Dbus service.
+
+It use async call to the dnf-daemon, so signal can be catched and a Gtk gui do
+not get unresonsive
+
+There is 2 classes :class:`DnfDaemonClient` & :class:`DnfDaemonReadOnlyClient`
+
+:class:`DnfDaemonClient` uses a system DBus service running as root and
+can make chages to the system.
+
+:class:`DnfDaemonReadOnlyClient` uses a session DBus service running as
+current user and can only do readonly actions.
+
+Usage: (Make your own subclass based on :class:`dnfdaemon.DnfDaemonClient`
+and overload the signal handlers)::
+
+
+    from dnfdaemon import DnfDaemonClient
+
+    class MyClient(DnfDaemonClient):
+
+        def __init(self):
+            DnfDaemonClient.__init__(self)
+            # Do your stuff here
+
+        def on_TransactionEvent(self,event, data):
+            # Do your stuff here
+            pass
+
+        def on_RPMProgress(self, package, action, te_current, te_total,
+                           ts_current, ts_total):
+            # Do your stuff here
+            pass
+
+        def on_GPGImport(self, pkg_id, userid, hexkeyid, keyurl,  timestamp ):
+           # do stuff here
+           pass
+
+        def on_DownloadStart(self, num_files, num_bytes):
+            ''' Starting a new parallel download batch '''
+           # do stuff here
+           pass
+
+        def on_DownloadProgress(self, name, frac, total_frac, total_files):
+            ''' Progress for a single instance in the batch '''
+           # do stuff here
+           pass
+
+        def on_DownloadEnd(self, name, status, msg):
+            ''' Download of af single instace ended '''
+           # do stuff here
+           pass
+
+        def on_RepoMetaDataProgress(self, name, frac):
+            ''' Repository Metadata Download progress '''
+           # do stuff here
+           pass
+
+
+Usage: (Make your own subclass based on
+:class:`dnfdaemon.DnfDaemonReadOnlyClient` and overload the signal handlers)::
+
+
+    from dnfdaemon import DnfDaemonReadOnlyClient
+
+    class MyClient(DnfDaemonReadOnlyClient):
+
+        def __init(self):
+            DnfDaemonClient.__init__(self)
+            # Do your stuff here
+
+        def on_RepoMetaDataProgress(self, name, frac):
+            ''' Repository Metadata Download progress '''
+           # do stuff here
+           pass
+
+"""
+
+import json
+import sys
+import re
+import weakref
+import logging
+import threading
+from queue import SimpleQueue, Empty
+
+
+CLIENT_API_VERSION = 2
+
+logger = logging.getLogger("dnfdaemon.client")
+
+from gi.repository import Gio, GLib, GObject
+
+ORG = 'org.baseurl.DnfSystem'
+INTERFACE = ORG
+
+ORG_READONLY = 'org.baseurl.DnfSession'
+INTERFACE_READONLY = ORG_READONLY
+
+DBUS_ERR_RE = re.compile('.*GDBus.Error:([\w\.]*): (.*)$')
+
+#
+# Exceptions
+#
+
+
+class DaemonError(Exception):
+    'Error from the backend'
+    def __init__(self, msg=None):
+        self.msg = msg
+
+    def __str__(self):
+        if self.msg:
+            return self.msg
+        else:
+            return ""
+
+
+class AccessDeniedError(DaemonError):
+    'User press cancel button in policykit window'
+
+
+class LockedError(DaemonError):
+    'The Yum daemon is locked'
+
+
+class TransactionError(DaemonError):
+    'The yum transaction failed'
+
+
+class APIVersionError(DaemonError):
+    'The yum transaction failed'
+
+
+#
+# Helper Classes
+#
+
+
+class DBus:
+    '''Helper class to work with GDBus in a easier way
+    '''
+    def __init__(self, conn):
+        self.conn = conn
+
+    def get(self, bus, obj, iface=None):
+        if iface is None:
+            iface = bus
+        return Gio.DBusProxy.new_sync(
+            self.conn, 0, None, bus, obj, iface, None
+        )
+
+    def get_async(self, callback, bus, obj, iface=None):
+        if iface is None:
+            iface = bus
+        Gio.DBusProxy.new(
+            self.conn, 0, None, bus, obj, iface, None, callback, None
+        )
+
+
+class WeakMethod:
+    ''' Helper class to work with a weakref class method '''
+    def __init__(self, inst, method):
+        self.proxy = weakref.proxy(inst)
+        self.method = method
+
+    def __call__(self, *args):
+        return getattr(self.proxy, self.method)(*args)
+
+
+# Get the system bus
+system = DBus(Gio.bus_get_sync(Gio.BusType.SYSTEM, None))
+session = DBus(Gio.bus_get_sync(Gio.BusType.SESSION, None))
+
+#
+# Main Client Class
+#
+
+
+class DnfDaemonBase:
+
+    def __init__(self, bus, org, interface):
+        self.bus = bus
+        self.dbus_org = org
+        self.dbus_interface = interface
+        self._sent = False
+        self._data = {'cmd': None}
+        self.eventQueue = SimpleQueue()
+        self.daemon = self._get_daemon(bus, org, interface)
+        self.__async_thread = None
+
+        logger.debug("%s daemon loaded - version :  %s" %
+                     (interface, self.daemon.GetVersion()))
+
+    def _get_daemon(self, bus, org, interface):
+        ''' Get the daemon dbus proxy object'''
+        try:
+            proxy = bus.get(org, "/", interface)
+            # Get daemon version, to check if it is alive
+            self.running_api_version = proxy.GetVersion()
+            if not self.running_api_version == CLIENT_API_VERSION:
+                raise APIVersionError('Client API : %d <> Server API : %s' %
+                                      (CLIENT_API_VERSION,
+                                      self.running_api_version))
+            # Connect the Dbus signal handler
+            proxy.connect('g-signal', WeakMethod(self, '_on_g_signal'))
+            return proxy
+        except Exception as err:
+            self._handle_dbus_error(err)
+
+    def _on_g_signal(self, proxy, sender, signal, params):
+        '''DBUS signal Handler '''
+        args = params.unpack()  # unpack the glib variant
+        self.handle_dbus_signals(proxy, sender, signal, args)
+
+    def handle_dbus_signals(self, proxy, sender, signal, args):
+        """ Overload in child class """
+        pass
+
+    def _handle_dbus_error(self, err):
+        '''Parse error from service and raise python Exceptions
+        '''
+        exc, msg = self._parse_error()
+        if exc != "":
+            logger.error("Exception   : %s", exc)
+            logger.error("   message  : %s", msg)
+        if exc == self.dbus_org + '.AccessDeniedError':
+            raise AccessDeniedError(msg)
+        elif exc == self.dbus_org + '.LockedError':
+            raise LockedError(msg)
+        elif exc == self.dbus_org + '.TransactionError':
+            raise TransactionError(msg)
+        elif exc == self.dbus_org + '.NotImplementedError':
+            raise TransactionError(msg)
+        else:
+            raise DaemonError(str(err))
+
+    def _parse_error(self):
+        '''parse values from a DBus related exception '''
+        (type, value, traceback) = sys.exc_info()
+        res = DBUS_ERR_RE.match(str(value))
+        if res:
+            return res.groups()
+        return "", ""
+
+    def _return_handler(self, obj, result, user_data):
+        '''Async DBus call, return handler '''
+        logger.debug("return_handler %s", user_data['cmd'])
+        if isinstance(result, Exception):
+            # print(result)
+            user_data['result'] = None
+            user_data['error'] = result
+        else:
+            user_data['result'] = result
+            user_data['error'] = None
+        #user_data['main_loop'].quit()
+
+        response = self._get_result(user_data)
+        self.eventQueue.put({'event': user_data['cmd'], 'value': response})
+        self._sent = False
+        logger.debug("Quit return_handler error %s", user_data['error'])
+
+
+
+    def _get_result(self, user_data):
+        '''Get return data from async call or handle error
+
+        user_data:
+        '''
+        logger.debug("get_result %s", user_data['cmd'])
+        result = {
+          'result': user_data['result'],
+          'error': user_data['error'],
+          }
+        if user_data['result']:
+          if user_data['cmd'] == "GetPackages" \
+            or user_data['cmd'] == "GetRepo" \
+            or user_data['cmd'] == "GetConfig" \
+            or user_data['cmd'] == "GetPackagesByName"\
+            or user_data['cmd'] == 'GetGroups' \
+            or user_data['cmd'] == 'GetGroupPackages' \
+            or user_data['cmd'] == 'Search'\
+            or user_data['cmd'] == 'GetTransaction'\
+            or user_data['cmd'] == 'AddTransaction'\
+            or user_data['cmd'] == 'GroupInstall'\
+            or user_data['cmd'] == 'GroupRemove'\
+            or user_data['cmd'] == 'Install' \
+            or user_data['cmd'] == 'Remove' \
+            or user_data['cmd'] == 'Update' \
+            or user_data['cmd'] == 'Reinstall' \
+            or user_data['cmd'] == 'Downgrade' \
+            or user_data['cmd'] == 'BuildTransaction' \
+            or user_data['cmd'] == 'RunTransaction' \
+            or user_data['cmd'] == 'GetHistoryByDays' \
+            or user_data['cmd'] == 'HistorySearch' \
+            or user_data['cmd'] == 'GetHistoryPackages' \
+            or user_data['cmd'] == 'HistoryUndo' :
+             result['result'] = json.loads(user_data['result'])
+          elif user_data['cmd'] == "GetRepositories":
+             result['result'] = [str(r) for r in user_data['result']]
+          elif user_data['cmd'] == 'GetAttribute':
+            if user_data['result'] == ':none':  # illegal attribute
+              result['error'] = "Illegal attribute"
+            elif user_data['result'] == ':not_found':  # package not found
+              result['error'] = "Package not found"
+            else:
+              result['result'] = json.loads(user_data['result'])
+
+          else:
+            pass
+
+        return result
+
+    def __async_thread_loop(self, data, *args):
+      '''
+      thread function for glib main loop
+      '''
+      logger.debug("__async_thread_loop Command %s(%s) requested ", str(data['cmd']), str(data['args']) if data['args'] else "")
+      try:
+        func = getattr(self.daemon, data['cmd'])
+
+        # TODO check if timeout = infinite is still needed
+        func(*args, result_handler=self._return_handler,
+              user_data=data, timeout=GObject.G_MAXINT)
+        #data['main_loop'].run()
+      except Exception as err:
+        logger.error("__async_thread_loop Exception %s"%(err))
+        data['error'] = err
+
+      # We enqueue one request at the time by now, monitoring _sent
+      self._sent = False
+
+    def _run_dbus_async(self, cmd, *args):
+        '''Make an async call to a DBus method in the yumdaemon service
+
+        cmd: method to run
+        '''
+        # We enqueue one request at the time by now, monitoring _sent
+        if not self._sent:
+          logger.debug("run_dbus_async %s", cmd)
+          if self.__async_thread and self.__async_thread.is_alive():
+            logger.warning("run_dbus_async main loop running %s - probably last request is not terminated yet", self.__async_thread.is_alive())
+          # We enqueue one request at the time by now, monitoring _sent
+          self._sent = True
+
+          # let's pass also args, it could be useful for debug at certain point...
+          self._data = {'cmd': cmd, 'args': args, }
+
+          data = self._data
+
+          self.__async_thread = threading.Thread(target=self.__async_thread_loop, args=(data, *args))
+          self.__async_thread.start()
+        else:
+          logger.warning("run_dbus_async %s, previous command %s in progress %s, loop running %s", cmd, self._data['cmd'], self._sent, self.__async_thread.is_alive())
+          result = {
+            'result': False,
+            'error': _("Command in progress"),
+          }
+
+          self.eventQueue.put({'event': cmd, 'value': result})
+          logger.debug("Command %s executed, result %s "%(cmd, result))
+
+
+    def _run_dbus_sync(self, cmd, *args):
+        '''Make a sync call to a DBus method in the yumdaemon service
+        cmd:
+        '''
+        func = getattr(self.daemon, cmd)
+        return func(*args)
+
+    def waitForLastAsyncRequestTermination(self):
+      '''
+      join async thread
+      '''
+      self.__async_thread.join()
+
+#
+# Dbus Signal Handlers (Overload in child class)
+#
+
+    def on_TransactionEvent(self, event, data):
+        self.eventQueue.put({'event': 'OnTransactionEvent',
+                             'value':
+                               {'event':event,
+                                'data':data,  }})
+
+    def on_RPMProgress(self, package, action, te_current, te_total, ts_current, ts_total):
+        self.eventQueue.put({'event': 'OnRPMProgress',
+                             'value':
+                               {'package':package,
+                                'action':action,
+                                'te_current':te_current,
+                                'te_total':te_total,
+                                'ts_current':ts_current,
+                                'ts_total':ts_total,}})
+
+    def on_GPGImport(self, pkg_id, userid, hexkeyid, keyurl, timestamp):
+        self.eventQueue.put({'event': 'OnGPGImport',
+                             'value':
+                               {'pkg_id':pkg_id,
+                                'userid':userid,
+                                'hexkeyid':hexkeyid,
+                                'keyurl':keyurl,
+                                'timestamp':timestamp,}})
+
+    def on_DownloadStart(self, num_files, num_bytes):
+        ''' Starting a new parallel download batch '''
+        self.eventQueue.put({'event': 'OnDownloadStart',
+                             'value':
+                               {'num_files':num_files,
+                                'num_bytes':num_bytes,  }})
+
+    def on_DownloadProgress(self, name, frac, total_frac, total_files):
+        ''' Progress for a single instance in the batch '''
+        self.eventQueue.put({'event': 'OnDownloadProgress',
+                             'value':
+                               {'name':name,
+                                'frac':frac,
+                                'total_frac':total_frac,
+                                'total_files':total_files,  }})
+
+    def on_DownloadEnd(self, name, status, msg):
+        ''' Download of af single instace ended '''
+        self.eventQueue.put({'event': 'OnDownloadEnd', 'value': {'name':name, 'status':status, 'msg':msg,  }})
+
+    def on_RepoMetaDataProgress(self, name, frac):
+        ''' Repository Metadata Download progress '''
+        self.eventQueue.put({'event': 'OnRepoMetaDataProgress', 'value': {'name':name, 'frac':frac, }})
+
+    def on_ErrorMessage(self, msg):
+        ''' Error message from daemon service '''
+        self.eventQueue.put({'event': 'OnErrorMessage', 'value': {'msg':msg,  }})
+
+
+#
+# API Methods
+#
+
+    def Lock(self, sync=False):
+        '''Get the yum lock, this give exclusive access to the daemon and yum
+        this must always be called before doing other actions
+        '''
+        try:
+          if not sync:
+            self._run_dbus_async('Lock')
+          else:
+            result = self._run_dbus_sync('Lock')
+            return result
+        except Exception as err:
+          self._handle_dbus_error(err)
+
+    def Unlock(self, sync=False):
+        '''Release the yum lock '''
+        try:
+          if not sync:
+            self._run_dbus_async('Unlock')
+          else:
+            result = self._run_dbus_sync('Unlock')
+            return result
+        except Exception as err:
+            self._handle_dbus_error(err)
+
+    def SetWatchdogState(self, state, sync=False):
+        '''Set the Watchdog state
+
+        Args:
+            state: True = Watchdog active, False = Watchdog disabled
+        '''
+        try:
+          if not sync:
+            self._run_dbus_async('SetWatchdogState', "(b)", state)
+          else:
+            self._run_dbus_sync('SetWatchdogState', "(b)", state)
+          #self.daemon.SetWatchdogState("(b)", state)
+        except Exception as err:
+            self._handle_dbus_error(err)
+
+    def GetPackages(self, pkg_filter, fields=[], sync=False):
+        '''Get a list of pkg list for a given package filter
+
+        each pkg list contains [pkg_id, field,....] where field is a
+        atrribute of the package object
+        Ex. summary, size etc.
+
+        Args:
+            pkg_filter: package filter ('installed','available',
+                               'updates','obsoletes','recent','extras')
+            fields: yum package objects attributes to get.
+        '''
+        if not sync:
+          self._run_dbus_async(
+              'GetPackages', '(sas)', pkg_filter, fields)
+        else:
+          result = self._run_dbus_sync(
+              'GetPackages', '(sas)', pkg_filter, fields)
+          return json.loads(result)
+
+
+    def ExpireCache(self, sync=False):
+        '''Expire the dnf metadata, so they will be refresed'''
+        if not sync:
+          self._run_dbus_async('ExpireCache', '()')
+        else:
+          result = self._run_dbus_sync('ExpireCache', '()')
+          return result
+
+
+    def GetRepositories(self, repo_filter, sync=False):
+        '''Get a list of repository ids where name matches a filter
+
+        Args:
+            repo_filter: filter to match
+
+        Returns:
+            list of repo id's
+        '''
+        if not sync:
+          self._run_dbus_async('GetRepositories', '(s)', repo_filter)
+        else:
+          result = self._run_dbus_sync('GetRepositories', '(s)', repo_filter)
+          return [str(r) for r in result]
+
+    def GetRepo(self, repo_id, sync=False):
+        '''Get a dictionary of information about a given repo id.
+
+        Args:
+            repo_id: repo id to get information from
+
+        Returns:
+            dictionary with repo info
+        '''
+        if not sync:
+          self._run_dbus_async('GetRepo', '(s)', repo_id)
+        else:
+          result = self._run_dbus_sync('GetRepo', '(s)', repo_id)
+          return json.loads(result)
+
+
+    def SetEnabledRepos(self, repo_ids, sync=False):
+        '''Enabled a list of repositories, disabled all other repos
+
+        Args:
+            repo_ids: list of repo ids to enable
+        '''
+        if not sync:
+          self._run_dbus_async('SetEnabledRepos', '(as)', repo_ids)
+        else:
+          self._run_dbus_sync('SetEnabledRepos', '(as)', repo_ids)
+
+    def GetConfig(self, setting, sync=False):
+        '''Read a config setting from yum.conf
+
+        Args:
+            setting: setting to read
+        '''
+        if not sync:
+          self._run_dbus_async('GetConfig', '(s)', setting)
+        else:
+          result = self._run_dbus_sync('GetConfig', '(s)', setting)
+          return json.loads(result)
+
+
+    def GetAttribute(self, pkg_id, attr, sync=False):
+        '''Get yum package attribute (description, filelist, changelog etc)
+
+        Args:
+            pkg_id: pkg_id to get attribute from
+            attr: name of attribute to get
+        '''
+        if not sync:
+          self._run_dbus_async('GetAttribute', '(ss)', pkg_id, attr)
+        else:
+          result = self._run_dbus_sync('GetAttribute', '(ss)', pkg_id, attr)
+          return json.loads(result)
+
+    def GetPackagesByName(self, name, attr=[], newest_only=True, sync=False):
+        '''Get a list of pkg ids for starts with name
+
+        Args:
+            name: name prefix to match
+            attr: a list of packages attributes to return (optional)
+            newest_only: show only the newest match or every
+                                match (optional).
+
+        Returns:
+            list of [pkg_id, attr1, attr2, ...]
+        '''
+        if not sync:
+          self._run_dbus_async('GetPackagesByName', '(sasb)',
+                          name, attr, newest_only)
+        else:
+          result = self._run_dbus_sync('GetPackagesByName', '(sasb)',
+                          name, attr, newest_only)
+          return json.loads(result)
+
+
+    def GetGroups(self, sync=False):
+        '''Get list of Groups. '''
+        if not sync:
+          self._run_dbus_async('GetGroups')
+        else:
+          result = self._run_dbus_sync('GetGroups')
+          return json.loads(result)
+
+
+    def GetGroupPackages(self, grp_id, grp_flt, fields, sync=False):
+        '''Get packages in a group
+
+        Args:
+            grp_id: the group id to get packages for
+            grp_flt: the filter ('all' = all packages ,
+                     'default' = packages to be installed, before
+                     the group is installed)
+            fields: extra package attributes to include in result
+        '''
+        if not sync:
+          self._run_dbus_async('GetGroupPackages', '(ssas)',
+                          grp_id, grp_flt, fields)
+        else:
+          result = self._run_dbus_sync('GetGroupPackages', '(ssas)',
+                          grp_id, grp_flt, fields)
+          return json.loads(result)
+
+
+    def Search(self, fields, keys, attrs, match_all, newest_only, tags, sync=False):
+        '''Search for packages where keys is matched in fields
+
+        Args:
+            fields: yum po attributes to search in
+            keys: keys to search for
+            attrs: list of extra package attributes to get
+            match_all: match all keys or only one
+            newest_only: return only the newest version of packages
+            tags: search pkgtags
+
+        Returns:
+            list of pkg_id's
+        '''
+
+        if not sync:
+          self._run_dbus_async('Search', '(asasasbbb)',
+                          fields, keys, attrs, match_all, newest_only, tags)
+        else:
+          result = self._run_dbus_sync('Search', '(asasasbbb)',
+                          fields, keys, attrs, match_all, newest_only, tags)
+          return json.loads(result)
+
+
+    def Exit(self, sync=True):
+      '''End the daemon'''
+      if not sync:
+        self._run_dbus_async('Exit')
+      else:
+        self._run_dbus_sync('Exit')
+
+#
+# Helper methods
+#
+
+    def to_pkg_tuple(self, id):
+        ''' split the pkg_id into a tuple'''
+        (n, e, v, r, a, repo_id) = str(id).split(',')
+        return (n, e, v, r, a, repo_id)
+
+    def to_txmbr_tuple(self, id):
+        ''' split the txmbr_id into a tuple'''
+        (n, e, v, r, a, repo_id, ts_state) = str(id).split(',')
+        return (n, e, v, r, a, repo_id, ts_state)
+
+
+class ClientReadOnly(DnfDaemonBase):
+    '''A class to communicate with the yumdaemon DBus services in a easy way
+    '''
+
+    def __init__(self):
+        DnfDaemonBase.__init__(self, session, ORG_READONLY, INTERFACE_READONLY)
+
+    def handle_dbus_signals(self, proxy, sender, signal, args):
+        ''' DBUS signal Handler '''
+        if signal == "RepoMetaDataProgress":
+            self.on_RepoMetaDataProgress(*args)
+        else:
+            logger.error("Unhandled Signal : " + signal, " Param: ", args)
+
+
+class Client(DnfDaemonBase):
+    '''A class to communicate with the dnfdaemon DBus services in a easy way
+    '''
+
+    def __init__(self):
+        DnfDaemonBase.__init__(self, system, ORG, INTERFACE)
+
+    def handle_dbus_signals(self, proxy, sender, signal, args):
+        ''' DBUS signal Handler '''
+        if signal == "TransactionEvent":
+            self.on_TransactionEvent(*args)
+        elif signal == "RPMProgress":
+            self.on_RPMProgress(*args)
+        elif signal == "GPGImport":
+            self.on_GPGImport(*args)
+        elif signal == "DownloadStart":
+            self.on_DownloadStart(*args)
+        elif signal == "DownloadEnd":
+            self.on_DownloadEnd(*args)
+        elif signal == "DownloadProgress":
+            self.on_DownloadProgress(*args)
+        elif signal == "RepoMetaDataProgress":
+            self.on_RepoMetaDataProgress(*args)
+        elif signal == "ErrorMessage":
+            self.on_ErrorMessage(*args)
+        else:
+            logger.error("Unhandled Signal : " + signal, " Param: ", args)
+
+#
+# API Methods
+#
+
+    def SetConfig(self, setting, value, sync=False):
+        '''Set a dnf config setting
+
+        Args:
+            setting: yum conf setting to set
+            value: value to set
+        '''
+        if not sync:
+          self._run_dbus_async(
+              'SetConfig', '(ss)', setting, json.dumps(value))
+        else:
+          return self._run_dbus_sync(
+              'SetConfig', '(ss)', setting, json.dumps(value))
+
+    def ClearTransaction(self, sync=False):
+        '''Clear the current transaction. '''
+        if not sync:
+          self._run_dbus_async('ClearTransaction')
+        else:
+          return self._run_dbus_sync('ClearTransaction')
+
+    def GetTransaction(self, sync=False):
+        '''Get the current transaction
+
+        Returns:
+            the current transaction
+        '''
+        if not sync:
+          self._run_dbus_async('GetTransaction')
+        else:
+          result = self._run_dbus_sync('GetTransaction')
+          return json.loads(result)
+
+    def AddTransaction(self, id, action, sync=False):
+        '''Add an package to the current transaction
+
+        Args:
+            id: package id for the package to add
+            action: the action to perform ( install, update, remove,
+                    obsolete, reinstall, downgrade, localinstall )
+        '''
+        if not sync:
+          self._run_dbus_async('AddTransaction', '(ss)', id, action)
+        else:
+          result = self._run_dbus_sync('AddTransaction', '(ss)', id, action)
+          return json.loads(result)
+
+    def GroupInstall(self, pattern, sync=False):
+        '''Do a group install <pattern string>,
+        same as dnf group install <pattern string>
+
+        Args:
+            pattern: group pattern to install
+        '''
+        if not sync:
+          self._run_dbus_async('GroupInstall', '(s)', pattern)
+        else:
+          result = self._run_dbus_sync('GroupInstall', '(s)', pattern)
+          return json.loads(result)
+
+    def GroupRemove(self, pattern, sync=False):
+        '''
+        Do a group remove <pattern string>,
+        same as dnf group remove <pattern string>
+
+        Args:
+            pattern: group pattern to remove
+        '''
+        if not sync:
+          self._run_dbus_async('GroupRemove', '(s)', pattern)
+        else:
+          result = self._run_dbus_sync('GroupRemove', '(s)', pattern)
+          return json.loads(result)
+
+
+    def Install(self, pattern, sync=False):
+        '''Do a install <pattern string>,
+        same as dnf install <pattern string>
+
+        Args:
+            pattern: package pattern to install
+        '''
+        if not sync:
+          self._run_dbus_async('Install', '(s)', pattern)
+        else:
+          result = self._run_dbus_sync('Install', '(s)', pattern)
+          return json.loads(result)
+
+    def Remove(self, pattern, sync=False):
+        '''Do a install <pattern string>,
+        same as dnf remove <pattern string>
+
+        Args:
+            pattern: package pattern to remove
+        '''
+        if not sync:
+          self._run_dbus_async('Remove', '(s)', pattern)
+        else:
+          result = self._run_dbus_sync('Remove', '(s)', pattern)
+          return json.loads(result)
+
+    def Update(self, pattern, sync=False):
+        '''Do a update <pattern string>,
+        same as dnf update <pattern string>
+
+        Args:
+            pattern: package pattern to update
+
+        '''
+        if not sync:
+          self._run_dbus_async('Update', '(s)', pattern)
+        else:
+          result = self._run_dbus_sync('Update', '(s)', pattern)
+          return json.loads(result)
+
+    def Reinstall(self, pattern, sync=False):
+        '''Do a reinstall <pattern string>,
+        same as dnf reinstall <pattern string>
+
+        Args:
+            pattern: package pattern to reinstall
+
+        '''
+        if not sync:
+          self._run_dbus_async('Reinstall', '(s)', pattern)
+        else:
+          result = self._run_dbus_sync('Reinstall', '(s)', pattern)
+          return json.loads(result)
+
+    def Downgrade(self, pattern, sync=False):
+        '''Do a install <pattern string>, same as yum remove <pattern string>
+
+        Args:
+            pattern: package pattern to downgrade
+        '''
+        if not sync:
+          self._run_dbus_async('Downgrade', '(s)', pattern)
+        else:
+          result = self._run_dbus_sync('Downgrade', '(s)', pattern)
+          return json.loads(result)
+
+    def BuildTransaction(self, sync=False):
+        '''Get a list of pkg ids for the current availabe updates '''
+        if not sync:
+          self._run_dbus_async('BuildTransaction')
+        else:
+          result = self._run_dbus_sync('BuildTransaction')
+          return json.loads(result)
+
+    def RunTransaction(self, sync=False):
+        ''' Get a list of pkg ids for the current availabe updates
+
+        Args:
+            max_err: maximun number of download error before we bail out
+        '''
+        if not sync:
+          self._run_dbus_async('RunTransaction')
+        else:
+          result = self._run_dbus_sync('RunTransaction')
+          return json.loads(result)
+
+    def GetHistoryByDays(self, start_days, end_days, sync=False):
+        '''Get History transaction in a interval of days from today
+
+        Args:
+            start_days: start of interval in days from now (0 = today)
+            end_days:end of interval in days from now
+
+        Returns:
+            list of (transaction is, date-time) pairs
+        '''
+        if not sync:
+          self._run_dbus_async('GetHistoryByDays', '(ii)', start_days, end_days)
+        else:
+          result = self._run_dbus_sync('GetHistoryByDays', '(ii)', start_days, end_days)
+          return json.loads(result)
+
+    def HistorySearch(self, pattern, sync=False):
+        '''Search the history for transaction matching a pattern
+
+        Args:
+            pattern: patterne to match
+
+        Returns:
+            list of (tid,isodates)
+        '''
+        if not sync:
+          self._run_dbus_async('HistorySearch', '(as)', pattern)
+        else:
+          result = self._run_dbus_sync('HistorySearch', '(as)', pattern)
+          return json.loads(result)
+
+    def GetHistoryPackages(self, tid, sync=False):
+        '''Get packages from a given yum history transaction id
+
+        Args:
+            tid: history transaction id
+
+        Returns:
+            list of (pkg_id, state, installed) pairs
+        '''
+        if not sync:
+          self._run_dbus_async('GetHistoryPackages', '(i)', tid)
+        else:
+          result = self._run_dbus_sync('GetHistoryPackages', '(i)', tid)
+          return json.loads(result)
+
+    def HistoryUndo(self, tid, sync=False):
+        """Undo a given dnf history transaction id
+
+        Args:
+            tid: history transaction id
+
+        Returns:
+            (rc, messages)
+        """
+        if not sync:
+          self._run_dbus_async('HistoryUndo', '(i)', tid)
+        else:
+          result = self._run_dbus_sync('HistoryUndo', '(i)', tid)
+          return json.loads(result)
+
+
+
+    def ConfirmGPGImport(self, hexkeyid, confirmed, sync=False):
+        '''Confirm import of at GPG Key by yum
+
+        Args:
+            hexkeyid: hex keyid for GPG key
+            confirmed: confirm import of key (True/False)
+        '''
+        if not sync:
+          self._run_dbus_async('ConfirmGPGImport', '(si)', hexkeyid, confirmed)
+        else:
+          self._run_dbus_sync('ConfirmGPGImport', '(si)', hexkeyid, confirmed)

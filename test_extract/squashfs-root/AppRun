@@ -1,0 +1,21 @@
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "${0}")")"
+export PATH="${HERE}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+
+if [ -z "$HOSTS_STUDIO_PRIV_ESC" ]; then
+    export HOSTS_STUDIO_PRIV_ESC=1
+    if command -v pkexec >/dev/null 2>&1; then
+        exec pkexec env HOSTS_STUDIO_PRIV_ESC=1 "$0" "$@"
+    elif command -v gksudo >/dev/null 2>&1; then
+        exec gksudo -- "$0" "$@"
+    elif command -v kdesudo >/dev/null 2>&1; then
+        exec kdesudo -- "$0" "$@"
+    else
+        echo "This application requires root privileges to modify /etc/hosts."
+        echo "Please run with: sudo $0"
+        exit 1
+    fi
+fi
+
+exec python3 "${HERE}/usr/share/hosts-studio/hosts_studio.py" "$@"

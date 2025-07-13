@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Hosts Studio
+GenericName=Hosts Studio
+Comment=Edit /etc/hosts file safely with a graphical interface
+Exec=hosts-studio
+Icon=hosts-studio
+Terminal=false
+Categories=System;Network;Settings;
+Keywords=hosts;network;dns;system;admin;
+StartupNotify=true
+StartupWMClass=hosts-studio

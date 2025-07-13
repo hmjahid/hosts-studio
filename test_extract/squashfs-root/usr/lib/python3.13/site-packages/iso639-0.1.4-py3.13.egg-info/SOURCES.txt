@@ -1,0 +1,12 @@
+LICENSE
+MANIFEST.in
+README.md
+requirements.txt
+setup.py
+iso639/__init__.py
+iso639/languages_utf-8.txt
+iso639.egg-info/PKG-INFO
+iso639.egg-info/SOURCES.txt
+iso639.egg-info/dependency_links.txt
+iso639.egg-info/requires.txt
+iso639.egg-info/top_level.txt

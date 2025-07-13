@@ -1,0 +1,43 @@
+Hosts Studio - AppImage Builder
+====================================
+[0;32m[INFO][0m Checking dependencies...
+[1;33m[WARNING][0m appimagetool not found. Attempting to download...
+[0] Downloading 'https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage' ...
+HTTP response 302  [https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage]
+Adding URL: https://release-assets.githubusercontent.com/github-production-release-asset/9435153/dd6e7bee-f4a3-4347-9954-b3bb02c11e6d?sp=r&sv=2018-11-09&sr=b&spr=https&se=2025-07-12T17%3A24%3A25Z&rscd=attachment%3B+filename%3Dappimagetool-x86_64.AppImage&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2025-07-12T16%3A24%3A14Z&ske=2025-07-12T17%3A24%3A25Z&sks=b&skv=2018-11-09&sig=%2BsqCikl6kDT2U8wdmkEFEj3OncfhX2YkH49Mq6cFrDs%3D&jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc1MjMzOTI3NiwibmJmIjoxNzUyMzM4OTc2LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.tk8X5GnD-hoFVtekzTjuNwX7x4iWenS8K_dYLrCDaSA&response-content-disposition=attachment%3B%20filename%3Dappimagetool-x86_64.AppImage&response-content-type=application%2Foctet-stream
+[0] Downloading 'https://release-assets.githubusercontent.com/github-production-release-asset/9435153/dd6e7bee-f4a3-4347-9954-b3bb02c11e6d?sp=r&sv=2018-11-09&sr=b&spr=https&se=2025-07-12T17%3A24%3A25Z&rscd=attachment%3B+filename%3Dappimagetool-x86_64.AppImage&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2025-07-12T16%3A24%3A14Z&ske=2025-07-12T17%3A24%3A25Z&sks=b&skv=2018-11-09&sig=%2BsqCikl6kDT2U8wdmkEFEj3OncfhX2YkH49Mq6cFrDs%3D&jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc1MjMzOTI3NiwibmJmIjoxNzUyMzM4OTc2LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.tk8X5GnD-hoFVtekzTjuNwX7x4iWenS8K_dYLrCDaSA&response-content-disposition=attachment%3B%20filename%3Dappimagetool-x86_64.AppImage&response-content-type=application%2Foctet-stream' ...
+Saving 'appimagetool'
+HTTP response 200  [https://release-assets.githubusercontent.com/github-production-release-asset/9435153/dd6e7bee-f4a3-4347-9954-b3bb02c11e6d?sp=r&sv=2018-11-09&sr=b&spr=https&se=2025-07-12T17%3A24%3A25Z&rscd=attachment%3B+filename%3Dappimagetool-x86_64.AppImage&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2025-07-12T16%3A24%3A14Z&ske=2025-07-12T17%3A24%3A25Z&sks=b&skv=2018-11-09&sig=%2BsqCikl6kDT2U8wdmkEFEj3OncfhX2YkH49Mq6cFrDs%3D&jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc1MjMzOTI3NiwibmJmIjoxNzUyMzM4OTc2LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.tk8X5GnD-hoFVtekzTjuNwX7x4iWenS8K_dYLrCDaSA&response-content-disposition=attachment%3B%20filename%3Dappimagetool-x86_64.AppImage&response-content-type=application%2Foctet-stream]
+[0;32m[INFO][0m Downloaded appimagetool
+[0;32m[INFO][0m Cleaning previous build...
+[0;32m[INFO][0m Creating AppDir structure...
+[0;32m[INFO][0m Copying application files...
+[0;32m[INFO][0m Copying application icon...
+[0;32m[INFO][0m Icon copied successfully
+[0;32m[INFO][0m Copying Python interpreter and libraries...
+[0;32m[INFO][0m Copying system libraries...
+[0;32m[INFO][0m Creating AppImage...
+/usr/bin/AppImageLauncher: /lib64/libcurl.so.4: no version information available (required by /usr/bin/../lib/x86_64-linux-gnu/appimagelauncher/libappimageupdate.so)
+appimagetool, continuous build (commit 5735cc5), build <local dev build> built on 2023-03-08 22:52:04 UTC
+/home/mdjhd/mdjhd/host-editor/AppDir/hosts-studio.desktop: hint: value "System;Network;Settings;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
+/home/mdjhd/mdjhd/host-editor/AppDir/hosts-studio.desktop: hint: value "System;Network;Settings;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
+Using architecture x86_64
+Deleting pre-existing .DirIcon
+Creating .DirIcon symlink based on information from desktop file
+AppStream upstream metadata found in usr/share/metainfo/hosts-studio.appdata.xml
+/home/mdjhd/mdjhd/host-editor/AppDir should be packaged as hosts-studio-1.0.0-x86_64.AppImage
+Trying to validate AppStream information with the appstreamcli tool
+In case of issues, please refer to https://github.com/ximion/appstream
+hosts-studio.appdata.xml
+  W: hosts-studio:3: cid-desktopapp-is-not-rdns hosts-studio
+  W: hosts-studio:28: url-not-reachable
+       https://github.com/your-repo/hosts-studio - URL was not found on the server.
+  W: hosts-studio:29: url-not-reachable
+       https://github.com/your-repo/hosts-studio/issues - URL was not found on the server.
+  W: hosts-studio:30: url-not-reachable
+       https://github.com/your-repo/hosts-studio/wiki - URL was not found on the server.
+  I: hosts-studio:31: developer-name-tag-deprecated
+  I: hosts-studio:~: developer-info-missing
+
+✘ Validation failed: warnings: 4, infos: 2
+run_external: subprocess exited with status 3Failed to validate AppStream information with appstreamcli

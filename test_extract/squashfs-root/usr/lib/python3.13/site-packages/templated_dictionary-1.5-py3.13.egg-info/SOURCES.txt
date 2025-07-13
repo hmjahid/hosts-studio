@@ -1,0 +1,10 @@
+LICENSE
+README.md
+setup.py
+templated_dictionary/__init__.py
+templated_dictionary.egg-info/PKG-INFO
+templated_dictionary.egg-info/SOURCES.txt
+templated_dictionary.egg-info/dependency_links.txt
+templated_dictionary.egg-info/not-zip-safe
+templated_dictionary.egg-info/requires.txt
+templated_dictionary.egg-info/top_level.txt
